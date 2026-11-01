@@ -67,6 +67,9 @@ export type RelayServer = {
   close(): void
   on<K extends keyof RelayServerEvents>(event: K, listener: RelayServerEvents[K]): void
   off<K extends keyof RelayServerEvents>(event: K, listener: RelayServerEvents[K]): void
+  listTabCaptures(): Array<{ captureId: string; tabId: number; title: string; offerSdp: string; createdAt: number }>
+  answerTabCapture(captureId: string, answerSdp: string): boolean
+  stopTabCapture(captureId: string): boolean
 }
 
 export async function startPlayWriterCDPRelayServer({
@@ -90,6 +93,16 @@ export async function startPlayWriterCDPRelayServer({
   const store = relayState.createRelayStore()
   const extensionDownloadBehavior = new Map<string, Protocol.Browser.SetDownloadBehaviorRequest>()
   const runtimeEnableWaiters = new Map<string, Set<() => void>>()
+  const tabCaptures = new Map<string, {
+    extensionId: string; captureId: string; tabId: number; title: string; offerSdp: string; createdAt: number
+  }>()
+  const currentTabCaptures = () => {
+    const now = Date.now()
+    for (const [id, capture] of tabCaptures) {
+      if (now - capture.createdAt > 10 * 60_000) tabCaptures.delete(id)
+    }
+    return Array.from(tabCaptures.values())
+  }
 
   const resolvedCdpLogger = cdpLogger || createCdpLogger()
   const logCdpJson = (entry: CdpLogEntry) => {
@@ -2370,6 +2383,29 @@ export async function startPlayWriterCDPRelayServer({
             return
           }
 
+          if (message.method === 'tabCaptureOffer') {
+            const { captureId, tabId, title, offerSdp } = message.params
+            if (typeof captureId === 'string' && /^[a-zA-Z0-9_-]{16,80}$/.test(captureId)
+              && typeof tabId === 'number' && Number.isSafeInteger(tabId) && tabId > 0
+              && typeof offerSdp === 'string' && offerSdp.length > 20 && offerSdp.length <= 200_000) {
+              tabCaptures.set(captureId, {
+                extensionId: connectionId, captureId, tabId,
+                title: typeof title === 'string' ? title.slice(0, 200) : 'Shared Chrome tab',
+                offerSdp, createdAt: Date.now(),
+              })
+              emitter.emit('tab-capture:changed')
+            }
+            return
+          }
+          if (message.method === 'tabCaptureStopped') {
+            const captureId = message.params.captureId
+            if (tabCaptures.get(captureId)?.extensionId === connectionId) {
+              tabCaptures.delete(captureId)
+              emitter.emit('tab-capture:changed')
+            }
+            return
+          }
+
           if (message.id !== undefined) {
             const pending = (() => {
               let pendingRequest: relayState.ExtensionPendingRequest | null = null
@@ -2693,6 +2729,10 @@ export async function startPlayWriterCDPRelayServer({
         },
 
         onClose(event) {
+          for (const [id, capture] of tabCaptures) {
+            if (capture.extensionId === connectionId) tabCaptures.delete(id)
+          }
+          emitter.emit('tab-capture:changed')
           logger?.log(`Extension disconnected: code=${event.code} reason=${event.reason || 'none'} (${connectionId})`)
 
           // Reject all pending I/O requests (state cleanup happens in removeExtension below)
@@ -3013,7 +3053,28 @@ export async function startPlayWriterCDPRelayServer({
   logger?.log('CDP endpoint:', cdpEndpoint)
 
   return {
+    listTabCaptures() {
+      return currentTabCaptures().map(({ captureId, tabId, title, offerSdp, createdAt }) => ({ captureId, tabId, title, offerSdp, createdAt }))
+    },
+    answerTabCapture(captureId, answerSdp) {
+      if (typeof answerSdp !== 'string' || answerSdp.length < 20 || answerSdp.length > 200_000) return false
+      const capture = currentTabCaptures().find((entry) => entry.captureId === captureId)
+      const extension = capture && store.getState().extensions.get(capture.extensionId)
+      if (!extension?.ws) return false
+      extension.ws.send(JSON.stringify({ method: 'tabCaptureAnswer', params: { captureId, answerSdp } }))
+      return true
+    },
+    stopTabCapture(captureId) {
+      const capture = tabCaptures.get(captureId)
+      if (!capture) return false
+      tabCaptures.delete(captureId)
+      const extension = store.getState().extensions.get(capture.extensionId)
+      extension?.ws?.send(JSON.stringify({ method: 'tabCaptureStop', params: { captureId } }))
+      emitter.emit('tab-capture:changed')
+      return true
+    },
     close() {
+      tabCaptures.clear()
       const { extensions, playwrightClients } = store.getState()
 
       for (const client of playwrightClients.values()) {

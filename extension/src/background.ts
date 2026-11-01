@@ -14,6 +14,29 @@ import { handleGhostBrowserCommand, type GhostBrowserCommandParams } from 'playw
 
 const RELAY_HOST = '127.0.0.1'
 const RELAY_PORT = Number(process.env.PLAYWRITER_PORT) || 19988
+const TAB_CAPTURE_MENU_ID = 'interpreter-share-tab-video'
+let offscreenCaptureSetup: Promise<void> | null = null
+
+async function ensureTabCaptureDocument(): Promise<void> {
+  if (!offscreenCaptureSetup) {
+    offscreenCaptureSetup = (async () => {
+      const contexts = await new Promise<chrome.runtime.ExtensionContext[]>((resolve) => {
+        chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] }, resolve)
+      })
+      if (contexts.length === 0) {
+        await chrome.offscreen.createDocument({
+          url: 'tab-capture.html',
+          reasons: ['USER_MEDIA', 'WEB_RTC'],
+          justification: 'Send a user-selected Chrome tab to the local Interpreter interface.',
+        })
+      }
+    })().catch((error) => {
+      offscreenCaptureSetup = null
+      throw error
+    })
+  }
+  return offscreenCaptureSetup
+}
 
 type NavigatorWithUaData = Navigator & {
   userAgentData?: {
@@ -289,6 +312,16 @@ class ConnectionManager {
       // Handle ping from server - respond with pong to keep service worker alive
       if (message.method === 'ping') {
         sendMessage({ method: 'pong' })
+        return
+      }
+
+      if (message.method === 'tabCaptureAnswer' && typeof message.params?.captureId === 'string'
+        && typeof message.params?.answerSdp === 'string') {
+        void chrome.runtime.sendMessage({ type: 'interpreter-tab-capture-answer', ...message.params })
+        return
+      }
+      if (message.method === 'tabCaptureStop' && typeof message.params?.captureId === 'string') {
+        void chrome.runtime.sendMessage({ type: 'interpreter-tab-capture-stop', captureId: message.params.captureId })
         return
       }
 
@@ -3339,6 +3372,25 @@ chrome.contextMenus
     })
   })
 
+chrome.contextMenus?.remove(TAB_CAPTURE_MENU_ID).catch(() => {}).finally(() => {
+  chrome.contextMenus?.create({
+    id: TAB_CAPTURE_MENU_ID,
+    title: 'Share this tab video with Interpreter',
+    contexts: ['page', 'video'],
+  })
+})
+
+chrome.runtime.onMessage.addListener((message: unknown) => {
+  if (!message || typeof message !== 'object') return
+  const value = message as Record<string, unknown>
+  if (value.type === 'interpreter-tab-capture-offer'
+    && typeof value.captureId === 'string' && typeof value.offerSdp === 'string') {
+    sendMessage({ method: 'tabCaptureOffer', params: value })
+  } else if (value.type === 'interpreter-tab-capture-stopped' && typeof value.captureId === 'string') {
+    sendMessage({ method: 'tabCaptureStopped', params: { captureId: value.captureId } })
+  }
+})
+
 function updateContextMenuVisibility(): void {
   const { currentTabId, tabs } = store.getState()
   const isConnected = currentTabId !== undefined && tabs.get(currentTabId)?.state === 'connected'
@@ -3422,6 +3474,29 @@ chrome.tabs.onUpdated.addListener(() => {
 })
 
 chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === TAB_CAPTURE_MENU_ID) {
+    if (!tab?.id || connectionManager.ws?.readyState !== WebSocket.OPEN) return
+    try {
+      const streamId = await new Promise<string>((resolve, reject) => {
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
+          const error = chrome.runtime.lastError
+          if (error || !id) reject(new Error(error?.message || 'Chrome did not grant tab capture.'))
+          else resolve(id)
+        })
+      })
+      await ensureTabCaptureDocument()
+      await chrome.runtime.sendMessage({
+        type: 'interpreter-tab-capture-start',
+        captureId: crypto.randomUUID(),
+        streamId,
+        tabId: tab.id,
+        title: tab.title || 'Shared Chrome tab',
+      })
+    } catch (error) {
+      logger.warn('Tab capture could not start:', error)
+    }
+    return
+  }
   if (info.menuItemId !== 'playwriter-pin-element' || !tab?.id) return
 
   const tabInfo = store.getState().tabs.get(tab.id)

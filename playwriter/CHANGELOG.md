@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.124
+
+1. **Relay live tab capture to Workstation** — forward the extension's tab capture stream through the existing authenticated browser relay, with start, stop, and session cleanup behavior.
+
 ## 0.0.123
 
 1. **Browser integration tests now validate portable behavior** — the real-browser suite preserves the host color scheme, accepts platform-specific screenshot pixel scaling, and checks stable click-error semantics across macOS and Linux Chromium.
