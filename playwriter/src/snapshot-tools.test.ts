@@ -62,7 +62,12 @@ describe('Snapshot & Screenshot Tests', () => {
     const serviceWorker = await getExtensionServiceWorker(browserContext)
 
     const page = await browserContext.newPage()
-    await page.goto('https://example.com/')
+    const testUrl = 'https://example.com/?test=screenshot-size'
+    await page.route(testUrl, (route) => route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html><body style="margin:0"><main style="width:1600px;height:1800px;background:#f00">Screenshot target</main></body></html>',
+    }))
+    await page.goto(testUrl)
     await page.bringToFront()
 
     await serviceWorker.evaluate(async () => {
@@ -83,7 +88,7 @@ describe('Snapshot & Screenshot Tests', () => {
     const cdpPage = browser
       .contexts()[0]
       .pages()
-      .find((p) => p.url().includes('example.com'))
+      .find((p) => p.url() === testUrl)
 
     expect(cdpPage).toBeDefined()
 
@@ -109,9 +114,10 @@ describe('Snapshot & Screenshot Tests', () => {
     console.log('Full page screenshot dimensions:', fullPageDimensions)
     expect(fullPageDimensions.width).toBeGreaterThan(0)
     expect(fullPageDimensions.height).toBeGreaterThan(0)
-    // A headed browser's full-page capture excludes the vertical scrollbar.
-    const contentWidth = await cdpPage!.evaluate(() => document.documentElement.scrollWidth)
-    expect(fullPageDimensions.width).toBe(contentWidth)
+    // Known content bounds verify full-page capture independently of platform scrollbar widths.
+    const deviceScale = await cdpPage!.evaluate(() => window.devicePixelRatio)
+    expect(fullPageDimensions.width).toBe(1600 * deviceScale)
+    expect(fullPageDimensions.height).toBe(1800 * deviceScale)
 
     testCtx!.relayServer.off('cdp:command', commandHandler)
 
