@@ -109,7 +109,9 @@ describe('Snapshot & Screenshot Tests', () => {
     console.log('Full page screenshot dimensions:', fullPageDimensions)
     expect(fullPageDimensions.width).toBeGreaterThan(0)
     expect(fullPageDimensions.height).toBeGreaterThan(0)
-    expect(fullPageDimensions.width).toBeGreaterThanOrEqual(viewportDimensions.width!)
+    // A headed browser's full-page capture excludes the vertical scrollbar.
+    const contentWidth = await cdpPage!.evaluate(() => document.documentElement.scrollWidth)
+    expect(fullPageDimensions.width).toBe(contentWidth)
 
     testCtx!.relayServer.off('cdp:command', commandHandler)
 
@@ -129,7 +131,7 @@ describe('Snapshot & Screenshot Tests', () => {
       },
     })
     expect(fullPageCommand.params).toMatchObject({
-      captureBeyondViewport: false,
+      captureBeyondViewport: true,
       format: 'png',
       clip: {
         x: 0,
