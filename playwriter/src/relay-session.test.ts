@@ -719,7 +719,9 @@ describe('CDP Session Tests', () => {
     const serviceWorker = await getExtensionServiceWorker(browserContext)
 
     const page = await browserContext.newPage()
-    await page.goto('https://example.com/')
+    const testUrl = 'https://example.com/?test=hidpi-coordinates'
+    await page.route(testUrl, (route) => route.fulfill({ contentType: 'text/html', body: '<h1>Coordinate target</h1>' }))
+    await page.goto(testUrl)
     await page.bringToFront()
 
     await serviceWorker.evaluate(async () => {
@@ -731,7 +733,7 @@ describe('CDP Session Tests', () => {
     const cdpPage = browser
       .contexts()[0]
       .pages()
-      .find((p) => p.url().includes('example.com'))
+      .find((p) => p.url() === testUrl)
     expect(cdpPage).toBeDefined()
 
     const h1Bounds = await cdpPage!.locator('h1').boundingBox()

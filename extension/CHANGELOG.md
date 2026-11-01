@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.104
+
+### Changes
+
+- Add an opt-in Chrome tab capture relay so a Workstation interface project can display a live browser tab stream through its scoped local API.
+
 ## 0.0.103
 
 ### Bug Fixes

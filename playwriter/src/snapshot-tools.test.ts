@@ -62,7 +62,12 @@ describe('Snapshot & Screenshot Tests', () => {
     const serviceWorker = await getExtensionServiceWorker(browserContext)
 
     const page = await browserContext.newPage()
-    await page.goto('https://example.com/')
+    const testUrl = 'https://example.com/?test=screenshot-size'
+    await page.route(testUrl, (route) => route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html><body style="margin:0"><main style="width:1600px;height:1800px;background:#f00">Screenshot target</main></body></html>',
+    }))
+    await page.goto(testUrl)
     await page.bringToFront()
 
     await serviceWorker.evaluate(async () => {
@@ -83,7 +88,7 @@ describe('Snapshot & Screenshot Tests', () => {
     const cdpPage = browser
       .contexts()[0]
       .pages()
-      .find((p) => p.url().includes('example.com'))
+      .find((p) => p.url() === testUrl)
 
     expect(cdpPage).toBeDefined()
 
@@ -109,7 +114,10 @@ describe('Snapshot & Screenshot Tests', () => {
     console.log('Full page screenshot dimensions:', fullPageDimensions)
     expect(fullPageDimensions.width).toBeGreaterThan(0)
     expect(fullPageDimensions.height).toBeGreaterThan(0)
-    expect(fullPageDimensions.width).toBeGreaterThanOrEqual(viewportDimensions.width!)
+    // Known content bounds verify full-page capture independently of platform scrollbar widths.
+    const deviceScale = await cdpPage!.evaluate(() => window.devicePixelRatio)
+    expect(fullPageDimensions.width).toBe(1600 * deviceScale)
+    expect(fullPageDimensions.height).toBe(1800 * deviceScale)
 
     testCtx!.relayServer.off('cdp:command', commandHandler)
 
@@ -129,7 +137,7 @@ describe('Snapshot & Screenshot Tests', () => {
       },
     })
     expect(fullPageCommand.params).toMatchObject({
-      captureBeyondViewport: false,
+      captureBeyondViewport: true,
       format: 'png',
       clip: {
         x: 0,
@@ -534,7 +542,12 @@ describe('Snapshot & Screenshot Tests', () => {
     const serviceWorker = await getExtensionServiceWorker(browserContext)
 
     const page = await browserContext.newPage()
-    await page.goto('https://example.com/')
+    const testUrl = 'https://example.com/?test=scrollbar-metrics'
+    await page.route(testUrl, (route) => route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html><body style="margin:0"><main style="width:1600px;height:1800px">Layout target</main></body></html>',
+    }))
+    await page.goto(testUrl)
     await page.bringToFront()
 
     await serviceWorker.evaluate(async () => {
@@ -547,7 +560,7 @@ describe('Snapshot & Screenshot Tests', () => {
     const cdpPage = browser
       .contexts()[0]
       .pages()
-      .find((p) => p.url().includes('example.com'))
+      .find((p) => p.url() === testUrl)
     expect(cdpPage).toBeDefined()
 
     const cdpSession = await getCDPSessionForPage({ page: cdpPage! })
@@ -555,20 +568,22 @@ describe('Snapshot & Screenshot Tests', () => {
     const layoutMetrics = await cdpSession.send('Page.getLayoutMetrics')
 
     const windowMetrics = await cdpPage!.evaluate(() => ({
-      width: window.innerWidth,
-      height: window.innerHeight,
+      width: document.documentElement.clientWidth,
+      height: document.documentElement.clientHeight,
+      visualWidth: window.visualViewport!.width,
+      visualHeight: window.visualViewport!.height,
       devicePixelRatio: window.devicePixelRatio,
     }))
     expect(layoutMetrics.cssLayoutViewport.clientWidth).toBe(windowMetrics.width)
     expect(layoutMetrics.cssLayoutViewport.clientHeight).toBe(windowMetrics.height)
-    expect(layoutMetrics.cssVisualViewport.clientWidth).toBe(windowMetrics.width)
-    expect(layoutMetrics.cssVisualViewport.clientHeight).toBe(windowMetrics.height)
+    expect(layoutMetrics.cssVisualViewport.clientWidth).toBe(windowMetrics.visualWidth)
+    expect(layoutMetrics.cssVisualViewport.clientHeight).toBe(windowMetrics.visualHeight)
     expect(layoutMetrics.cssVisualViewport.scale).toBe(1)
     expect(layoutMetrics.cssVisualViewport.zoom).toBe(1)
     const layoutScaleX = layoutMetrics.layoutViewport.clientWidth / windowMetrics.width
     const layoutScaleY = layoutMetrics.layoutViewport.clientHeight / windowMetrics.height
-    const visualScaleX = layoutMetrics.visualViewport.clientWidth / windowMetrics.width
-    const visualScaleY = layoutMetrics.visualViewport.clientHeight / windowMetrics.height
+    const visualScaleX = layoutMetrics.visualViewport.clientWidth / windowMetrics.visualWidth
+    const visualScaleY = layoutMetrics.visualViewport.clientHeight / windowMetrics.visualHeight
     expect(layoutScaleX).toBeGreaterThanOrEqual(1)
     expect(layoutScaleY).toBeCloseTo(layoutScaleX, 2)
     expect(visualScaleX).toBeCloseTo(layoutScaleX, 2)

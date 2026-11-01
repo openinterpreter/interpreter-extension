@@ -54,6 +54,12 @@ export type ExtensionPongMessage = {
   method: 'pong'
 }
 
+export type ExtensionTabCaptureMessage = {
+  id?: undefined
+  method: 'tabCaptureOffer' | 'tabCaptureStopped'
+  params: { captureId: string; tabId?: number; title?: string; offerSdp?: string }
+}
+
 export type ServerPingMessage = {
   method: 'ping'
   id?: undefined
@@ -64,6 +70,7 @@ export type ExtensionMessage =
   | ExtensionEventMessage
   | ExtensionLogMessage
   | ExtensionPongMessage
+  | ExtensionTabCaptureMessage
 
 // Ghost Browser API command message (for Ghost Browser integration)
 export type GhostBrowserCommandMessage = {

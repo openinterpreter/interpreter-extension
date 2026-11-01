@@ -62,6 +62,7 @@ export default defineConfig({
             return JSON.stringify(manifest, null, 2)
           },
         },
+        { src: copySource('src/tab-capture.html'), dest: '.' },
       ],
     }),
   ],
@@ -74,6 +75,7 @@ export default defineConfig({
       input: {
         background: resolve(__dirname, 'src/background.ts'),
         welcome: resolve(__dirname, 'src/welcome.html'),
+        'tab-capture': resolve(__dirname, 'src/tab-capture.ts'),
       },
       output: {
         entryFileNames: '[name].js',
